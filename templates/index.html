@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineChromatic - AI-Powered Video Grading</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container py-5">
+        <div class="text-center mb-5">
+            <h1 class="display-4">CineChromatic</h1>
+            <p class="lead">AI-Powered Emotion-Based Video Grading</p>
+        </div>
+
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card bg-dark">
+                    <div class="card-body">
+                        <form id="uploadForm">
+                            <div class="mb-4">
+                                <label class="form-label">Upload Script (PDF/TXT)</label>
+                                <input type="file" class="form-control" id="scriptFile" accept=".pdf,.txt" required>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="form-label">Upload Video</label>
+                                <input type="file" class="form-control" id="videoFile" accept="video/*" required>
+                            </div>
+
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary" id="processBtn">
+                                    <i class="fas fa-magic me-2"></i>Process Video
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- Progress Section -->
+                        <div id="progressSection" class="mt-4 d-none">
+                            <div class="progress mb-3">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <p class="text-center" id="statusText">Processing...</p>
+                        </div>
+
+                        <!-- Results Section -->
+                        <div id="resultsSection" class="mt-4 d-none">
+                            <div class="alert alert-info">
+                                <h5>Detected Emotion: <span id="detectedEmotion"></span></h5>
+                                <div class="mt-2">
+                                    <span>Color Palette:</span>
+                                    <div id="colorPreview" class="color-preview mt-2"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-success" id="downloadBtn">
+                                    <i class="fas fa-download me-2"></i>Download Processed Video
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
