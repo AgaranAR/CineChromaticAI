@@ -58,35 +58,51 @@ def process():
         if not (allowed_file(script_file.filename) and allowed_file(video_file.filename)):
             return jsonify({'error': 'Invalid file type'}), 400
 
-        # Save files
-        script_path = os.path.join(UPLOAD_FOLDER, secure_filename(script_file.filename))
-        video_path = os.path.join(UPLOAD_FOLDER, secure_filename(video_file.filename))
+        # Save files with proper error handling
+        try:
+            script_path = os.path.join(UPLOAD_FOLDER, secure_filename(script_file.filename))
+            video_path = os.path.join(UPLOAD_FOLDER, secure_filename(video_file.filename))
 
-        script_file.save(script_path)
-        video_file.save(video_path)
+            script_file.save(script_path)
+            video_file.save(video_path)
+        except Exception as e:
+            logger.error(f"File save error: {str(e)}")
+            return jsonify({'error': 'Failed to save uploaded files'}), 500
 
         # Process script
-        if script_path.endswith('.pdf'):
-            script_text = extract_text_from_pdf(script_path)
-        else:
-            with open(script_path, 'r', encoding='utf-8') as f:
-                script_text = f.read()
+        try:
+            if script_path.endswith('.pdf'):
+                script_text = extract_text_from_pdf(script_path)
+            else:
+                with open(script_path, 'r', encoding='utf-8') as f:
+                    script_text = f.read()
 
-        if not script_text:
-            return jsonify({'error': 'Could not extract text from script'}), 400
+            if not script_text:
+                return jsonify({'error': 'Could not extract text from script'}), 400
+        except Exception as e:
+            logger.error(f"Script processing error: {str(e)}")
+            return jsonify({'error': 'Failed to process script file'}), 500
 
         # Get color information
-        color_info = script.get_dominant_color(script_text)
-        logger.debug(f"Color info: {color_info}")
+        try:
+            color_info = script.get_dominant_color(script_text)
+            logger.debug(f"Color info: {color_info}")
+        except Exception as e:
+            logger.error(f"Color analysis error: {str(e)}")
+            return jsonify({'error': 'Failed to analyze script emotions'}), 500
 
         # Process video
-        output_path = os.path.join(UPLOAD_FOLDER, f"processed_{os.path.splitext(secure_filename(video_file.filename))[0]}.mp4")
-        apply_color_grading(video_path, output_path, color_info['color'])
+        try:
+            output_path = os.path.join(UPLOAD_FOLDER, f"processed_{os.path.splitext(secure_filename(video_file.filename))[0]}.mp4")
+            output_path = apply_color_grading(video_path, output_path, color_info['color'])
 
-        # Verify file exists
-        if not os.path.exists(output_path):
-            logger.error(f"Output video not found at: {output_path}")
-            return jsonify({'error': 'Video processing failed'}), 500
+            if not os.path.exists(output_path):
+                logger.error(f"Output video not found at: {output_path}")
+                return jsonify({'error': 'Video processing failed'}), 500
+
+        except Exception as e:
+            logger.error(f"Video processing error: {str(e)}")
+            return jsonify({'error': f'Failed to process video: {str(e)}'}), 500
 
         return jsonify({
             'dominant_emotion': color_info['emotion'],
@@ -122,12 +138,29 @@ def apply_color_grading(input_path, output_path, color_hex):
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        # Use H.264 codec for better compatibility
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+        # Try different codecs in order of preference
+        codecs = [
+            ('mp4v', '.mp4'),  # Default MP4 codec
+            ('XVID', '.avi'),  # AVI format
+            ('MJPG', '.avi'),  # Motion JPEG
+        ]
 
-        if not out.isOpened():
-            raise Exception("Could not create output video file")
+        out = None
+        for codec, ext in codecs:
+            try:
+                output_with_ext = f"{os.path.splitext(output_path)[0]}{ext}"
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                out = cv2.VideoWriter(output_with_ext, fourcc, fps, (frame_width, frame_height))
+                if out.isOpened():
+                    output_path = output_with_ext
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to initialize codec {codec}: {str(e)}")
+                if out:
+                    out.release()
+
+        if not out or not out.isOpened():
+            raise Exception("Could not create output video file with any supported codec")
 
         # Convert hex color to BGR
         color = tuple(int(color_hex.lstrip('#')[i:i+2], 16) for i in (4, 2, 0))
@@ -144,20 +177,24 @@ def apply_color_grading(input_path, output_path, color_hex):
             if frame_count % 10 == 0:
                 logger.debug(f"Processing frame {frame_count}/{total_frames}")
 
-            # Detect emotion from frame
-            frame_emotion = emotion.detect_emotion(frame)
+            try:
+                # Detect emotion from frame
+                frame_emotion = emotion.detect_emotion(frame)
 
-            # Apply emotion-based filter
-            frame = emotion.apply_emotion_based_filter(frame, frame_emotion)
+                # Apply emotion-based filter
+                frame = emotion.apply_emotion_based_filter(frame, frame_emotion)
 
-            # Apply overall color grading
-            frame = cv2.addWeighted(
-                frame, 0.7,
-                np.full(frame.shape, color, dtype=np.uint8), 0.3,
-                0
-            )
+                # Apply overall color grading
+                frame = cv2.addWeighted(
+                    frame, 0.7,
+                    np.full(frame.shape, color, dtype=np.uint8), 0.3,
+                    0
+                )
 
-            out.write(frame)
+                out.write(frame)
+            except Exception as e:
+                logger.error(f"Error processing frame {frame_count}: {str(e)}")
+                continue
 
         # Properly release resources
         cap.release()
@@ -168,6 +205,7 @@ def apply_color_grading(input_path, output_path, color_hex):
             raise Exception("Output video file was not created")
 
         logger.info(f"Successfully processed video: {output_path}")
+        return output_path
 
     except Exception as e:
         logger.error(f"Color grading error: {str(e)}")

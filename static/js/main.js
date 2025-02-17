@@ -12,10 +12,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let outputVideoPath = null;
 
+    function showToast(message, isError = false) {
+        Toastify({
+            text: message,
+            duration: 3000,
+            gravity: "top",
+            position: "right",
+            backgroundColor: isError ? "#dc3545" : "#198754",
+            stopOnFocus: true,
+        }).showToast();
+    }
+
     // Preview uploaded video
     document.getElementById('videoFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (file) {
+            if (file.size > 100 * 1024 * 1024) {
+                showToast('Video file size must be less than 100MB', true);
+                this.value = '';
+                return;
+            }
             const url = URL.createObjectURL(file);
             previewVideo.src = url;
             previewVideo.classList.remove('d-none');
@@ -30,7 +46,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const videoFile = document.getElementById('videoFile').files[0];
 
         if (!scriptFile || !videoFile) {
-            alert('Please select both script and video files');
+            showToast('Please select both script and video files', true);
             return;
         }
 
@@ -41,6 +57,7 @@ document.addEventListener('DOMContentLoaded', function() {
         progressSection.classList.remove('d-none');
         resultsSection.classList.add('d-none');
         processBtn.disabled = true;
+        statusText.classList.remove('text-danger');
 
         try {
             // Start progress animation
@@ -59,12 +76,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: formData
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Processing failed');
-            }
-
             const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Processing failed');
+            }
 
             // Complete progress
             clearInterval(progressInterval);
@@ -82,10 +98,15 @@ document.addEventListener('DOMContentLoaded', function() {
             previewVideo.src = processedVideoUrl;
             previewVideo.classList.remove('d-none');
 
+            showToast('Video processed successfully!');
+
         } catch (error) {
             console.error('Error:', error);
+            clearInterval(progressInterval);
+            progressBar.style.width = '0%';
             statusText.textContent = `Error: ${error.message}`;
             statusText.classList.add('text-danger');
+            showToast(error.message, true);
         } finally {
             processBtn.disabled = false;
         }
@@ -94,6 +115,8 @@ document.addEventListener('DOMContentLoaded', function() {
     downloadBtn.addEventListener('click', function() {
         if (outputVideoPath) {
             window.location.href = `/download/${encodeURIComponent(outputVideoPath)}`;
+        } else {
+            showToast('No processed video available', true);
         }
     });
 });
