@@ -30,6 +30,13 @@
                                 <input type="file" class="form-control" id="videoFile" accept="video/*" required>
                             </div>
 
+                            <!-- Video Preview -->
+                            <div class="mb-4">
+                                <video id="previewVideo" class="w-100 d-none" controls>
+                                    Your browser does not support the video tag.
+                                </video>
+                            </div>
+
                             <div class="d-grid">
                                 <button type="submit" class="btn btn-primary" id="processBtn">
                                     <i class="fas fa-magic me-2"></i>Process Video
@@ -55,7 +62,7 @@
                                     <div id="colorPreview" class="color-preview mt-2"></div>
                                 </div>
                             </div>
-                            
+
                             <div class="d-grid gap-2">
                                 <button class="btn btn-success" id="downloadBtn">
                                     <i class="fas fa-download me-2"></i>Download Processed Video

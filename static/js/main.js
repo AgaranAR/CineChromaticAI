@@ -8,12 +8,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const colorPreview = document.getElementById('colorPreview');
     const downloadBtn = document.getElementById('downloadBtn');
     const processBtn = document.getElementById('processBtn');
+    const previewVideo = document.getElementById('previewVideo');
 
     let outputVideoPath = null;
 
+    // Preview uploaded video
+    document.getElementById('videoFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            const url = URL.createObjectURL(file);
+            previewVideo.src = url;
+            previewVideo.classList.remove('d-none');
+        }
+    });
+
     uploadForm.addEventListener('submit', async function(e) {
         e.preventDefault();
-        
+
         const formData = new FormData();
         const scriptFile = document.getElementById('scriptFile').files[0];
         const videoFile = document.getElementById('videoFile').files[0];
@@ -32,11 +43,11 @@ document.addEventListener('DOMContentLoaded', function() {
         processBtn.disabled = true;
 
         try {
-            // Simulate progress
+            // Start progress animation
             let progress = 0;
             const progressInterval = setInterval(() => {
-                progress += 5;
-                if (progress <= 90) {
+                progress += 2;
+                if (progress <= 95) {
                     progressBar.style.width = `${progress}%`;
                     statusText.textContent = `Processing... ${progress}%`;
                 }
@@ -49,11 +60,12 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
             if (!response.ok) {
-                throw new Error('Processing failed');
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Processing failed');
             }
 
             const data = await response.json();
-            
+
             // Complete progress
             clearInterval(progressInterval);
             progressBar.style.width = '100%';
@@ -62,12 +74,17 @@ document.addEventListener('DOMContentLoaded', function() {
             // Show results
             outputVideoPath = data.output_video;
             detectedEmotion.textContent = data.dominant_emotion;
-            colorPreview.style.backgroundColor = data.color || '#FFFFFF';
+            colorPreview.style.backgroundColor = data.color;
             resultsSection.classList.remove('d-none');
+
+            // Update preview video with processed result
+            const processedVideoUrl = `/download/${outputVideoPath}`;
+            previewVideo.src = processedVideoUrl;
+            previewVideo.classList.remove('d-none');
 
         } catch (error) {
             console.error('Error:', error);
-            statusText.textContent = 'Error: Processing failed';
+            statusText.textContent = `Error: ${error.message}`;
             statusText.classList.add('text-danger');
         } finally {
             processBtn.disabled = false;

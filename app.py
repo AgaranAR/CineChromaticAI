@@ -80,13 +80,18 @@ def process():
         logger.debug(f"Color info: {color_info}")
 
         # Process video
-        output_path = os.path.join(UPLOAD_FOLDER, f"processed_{secure_filename(video_file.filename)}")
+        output_path = os.path.join(UPLOAD_FOLDER, f"processed_{os.path.splitext(secure_filename(video_file.filename))[0]}.mp4")
         apply_color_grading(video_path, output_path, color_info['color'])
+
+        # Verify file exists
+        if not os.path.exists(output_path):
+            logger.error(f"Output video not found at: {output_path}")
+            return jsonify({'error': 'Video processing failed'}), 500
 
         return jsonify({
             'dominant_emotion': color_info['emotion'],
             'color': color_info['color'],
-            'output_video': output_path
+            'output_video': os.path.basename(output_path)
         })
 
     except Exception as e:
@@ -98,6 +103,7 @@ def download(filename):
     try:
         full_path = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
         if not os.path.exists(full_path):
+            logger.error(f"Download requested for non-existent file: {full_path}")
             return jsonify({'error': 'File not found'}), 404
         return send_file(full_path, as_attachment=True)
     except Exception as e:
@@ -111,20 +117,32 @@ def apply_color_grading(input_path, output_path, color_hex):
         if not cap.isOpened():
             raise Exception("Could not open video file")
 
+        # Get video properties
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # Use H.264 codec for better compatibility
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
         out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+        if not out.isOpened():
+            raise Exception("Could not create output video file")
 
         # Convert hex color to BGR
         color = tuple(int(color_hex.lstrip('#')[i:i+2], 16) for i in (4, 2, 0))
+
+        frame_count = 0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
+
+            frame_count += 1
+            if frame_count % 10 == 0:
+                logger.debug(f"Processing frame {frame_count}/{total_frames}")
 
             # Detect emotion from frame
             frame_emotion = emotion.detect_emotion(frame)
@@ -141,8 +159,15 @@ def apply_color_grading(input_path, output_path, color_hex):
 
             out.write(frame)
 
+        # Properly release resources
         cap.release()
         out.release()
+
+        # Verify the output file was created
+        if not os.path.exists(output_path):
+            raise Exception("Output video file was not created")
+
+        logger.info(f"Successfully processed video: {output_path}")
 
     except Exception as e:
         logger.error(f"Color grading error: {str(e)}")
