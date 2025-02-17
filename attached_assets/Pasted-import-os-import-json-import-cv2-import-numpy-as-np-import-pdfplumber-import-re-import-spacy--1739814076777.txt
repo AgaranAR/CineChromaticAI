@@ -1,0 +1,136 @@
+import os
+import json
+import cv2
+import numpy as np
+import pdfplumber
+import re
+import spacy
+import google.generativeai as genai
+from flask import Flask, request, jsonify
+import emotion  # Importing scene-wise emotion detection module
+
+# Configure Gemini API
+genai.configure(api_key="AIzaSyBQG3SttTU_Rgo_GldPYnQ0P9_mGlWEkK0")  # Replace with actual key
+
+app = Flask(__name__)
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Load NLP model
+nlp = spacy.load("en_core_web_sm")
+
+# Predefined emotion-to-color mapping
+COLOR_MAPPING = {
+    "dark": "#1B263B", "mystery": "#1B263B", "horror": "#000000", "death": "#000000",
+    "love": "#D72638", "romance": "#D72638", "hope": "#FFD700", "fantasy": "#8A2BE2",
+    "sci-fi": "#32CD32", "danger": "#FF4500", "crime": "#2F4F4F"
+}
+
+# Extract text from PDF
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            extracted_text = page.extract_text()
+            if extracted_text:
+                text += extracted_text + "\n"
+    return text.strip()
+
+# Extract emotions from script
+def extract_emotions(script_text):
+    doc = nlp(script_text.lower())
+    return [token.lemma_ for token in doc if token.lemma_ in COLOR_MAPPING]
+
+# Get dominant color from script
+def get_dominant_color(script_text):
+    emotions = extract_emotions(script_text)
+    if emotions:
+        return {"color": COLOR_MAPPING.get(emotions[0], "#FFFFFF"), "emotion": emotions[0]}
+    
+    # Gemini AI fallback
+    prompt = f"""
+    Analyze this movie script and return the dominant emotion.
+    Strictly return JSON: {{"dominant_emotion": "emotion_name"}}
+    {script_text[:2000]}
+    """
+    try:
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(prompt)
+        json_data = json.loads(re.search(r"\{.*\}", response.text).group(0))
+        return {"color": COLOR_MAPPING.get(json_data.get("dominant_emotion", "neutral"), "#FFFFFF"), "emotion": json_data.get("dominant_emotion", "neutral")}
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        return {"color": "#FFFFFF", "emotion": "neutral"}
+
+# Apply LUT for cinematic grading
+def apply_lut(frame, lut_path):
+    lut = cv2.imread(lut_path, cv2.IMREAD_UNCHANGED)
+    lut = cv2.resize(lut, (256, 1))
+    return cv2.LUT(frame, lut)
+
+# Enhance contrast
+def enhance_contrast(frame):
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(l)
+    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+
+# Adjust saturation
+def adjust_saturation(frame, scale=1.3):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = np.clip(s * scale, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(cv2.merge((h, s, v)), cv2.COLOR_HSV2BGR)
+
+# Apply color grading to video
+def apply_color_grading(input_video, output_video, color_hex, lut_path):
+    cap = cv2.VideoCapture(input_video)
+    frame_width, frame_height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out = cv2.VideoWriter(output_video, cv2.VideoWriter_fourcc(*'mp4v'), cap.get(cv2.CAP_PROP_FPS), (frame_width, frame_height))
+    color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
+    color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        detected_emotion = emotion.detect_emotion(frame)
+        frame = apply_lut(frame, lut_path)
+        frame = enhance_contrast(frame)
+        frame = adjust_saturation(frame)
+        frame = cv2.addWeighted(frame, 0.7, np.full_like(frame, color_bgr, dtype=np.uint8), 0.3, 0)
+        out.write(frame)
+
+    cap.release()
+    out.release()
+
+# **Flask API Route**
+@app.route("/process", methods=["POST"])
+def process_media():
+    if "script" not in request.files or "video" not in request.files:
+        return jsonify({"error": "Missing script or video file"}), 400
+
+    script_file, video_file = request.files["script"], request.files["video"]
+    
+    # Save uploaded video
+    video_path = os.path.join(UPLOAD_FOLDER, video_file.filename)
+    video_file.save(video_path)
+
+    # Extract script text
+    if script_file.filename.endswith(".pdf"):
+        script_text = extract_text_from_pdf(script_file)
+    else:
+        script_text = script_file.read().decode("utf-8")
+
+    # Get dominant color
+    color_info = get_dominant_color(script_text)
+
+    # Process video
+    output_video_path = os.path.join(UPLOAD_FOLDER, "graded_" + video_file.filename)
+    apply_color_grading(video_path, output_video_path, color_info["color"], "path/to/cinematic_lut.png")
+
+    return jsonify({"dominant_emotion": color_info["emotion"], "output_video": output_video_path})
+
+# **Run the Flask App**
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
