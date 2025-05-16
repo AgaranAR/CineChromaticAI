@@ -1,86 +1,82 @@
 import cv2
 import logging
-from collections import Counter
+from collections import Counter, deque
 import numpy as np
+from deepface import DeepFace
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Store detected emotions across frames for smoothing
-emotion_history = []
-MAX_HISTORY = 30  # Keep track of last 30 frames
+# Emotion history for smoothing
+emotion_history = deque(maxlen=30)  
+frame_count = 0  # Track frames to reduce DeepFace calls
 
-# Emotion to color mapping for visual feedback
+# Emotion to color mapping (BGR format)
 EMOTION_COLORS = {
-    'happy': '#FFD700',  # Gold
-    'sad': '#0000FF',    # Blue
-    'angry': '#FF0000',  # Red
-    'fear': '#800080',   # Purple
-    'surprise': '#FFA500',  # Orange
-    'neutral': '#808080',   # Gray
-    'disgust': '#4B0082',
+    'happy': (0, 215, 255),    # Gold
+    'sad': (255, 0, 0),        # Blue
+    'angry': (0, 0, 255),      # Red
+    'fear': (128, 0, 128),     # Purple
+    'surprise': (0, 165, 255), # Orange
+    'neutral': (128, 128, 128), # Gray
+    'disgust': (75, 0, 130),   # Indigo
 }
 
 def preprocess_frame(frame):
     """Preprocess frame for emotion detection."""
     try:
-        # Resize for faster processing
-        frame = cv2.resize(frame, (224, 224))
-        return frame
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  
+        resized = cv2.resize(frame, (224, 224))  
+        return resized.astype(np.float32) / 255.0  
     except Exception as e:
         logger.error(f"Error preprocessing frame: {str(e)}")
         return None
 
 def detect_emotion(frame):
     """
-    Detects emotion in a frame. Falls back to neutral if detection fails.
-    Returns the most stable emotion based on recent history.
+    Detect emotion in a frame using DeepFace.
+    Processes every 5th frame for efficiency.
     """
-    try:
-        # For now, return a default emotion since we're having TensorFlow issues
-        # This will be replaced with actual detection once dependencies are fixed
-        emotion = "neutral"
+    global frame_count
+    frame_count += 1
 
-        # Update emotion history
-        emotion_history.append(emotion)
-        if len(emotion_history) > MAX_HISTORY:
-            emotion_history.pop(0)
-
-        # Get most stable emotion from history
+    if frame_count % 5 != 0:  
         if emotion_history:
-            stable_emotion = Counter(emotion_history).most_common(1)[0][0]
-        else:
-            stable_emotion = "neutral"
+            return Counter(emotion_history).most_common(1)[0][0]  
+        return 'neutral'
 
-        logger.debug(f"Detected emotion: {stable_emotion}")
-        return stable_emotion
+    try:
+        results = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
+
+        if isinstance(results, list) and results:
+            emotions = results[0].get('emotion', {})
+            if emotions:
+                dominant_emotion = max(emotions, key=emotions.get)  
+                emotion_history.append(dominant_emotion)
+                smoothed_emotion = Counter(emotion_history).most_common(1)[0][0]
+                return smoothed_emotion
+
+        return 'neutral'
 
     except Exception as e:
-        logger.error(f"Error detecting emotion: {str(e)}")
-        return "neutral"
+        logger.error(f"Emotion detection error: {str(e)}")
+        return 'neutral'
 
-def get_emotion_color(emotion):
-    """Returns the corresponding color for an emotion."""
-    return EMOTION_COLORS.get(emotion, '#808080')
-
-def apply_emotion_based_filter(frame, emotion):
+def apply_emotion_based_filter(frame, emotion, confidence=0.7):
     """
-    Applies visual filters based on detected emotion.
+    Applies a visual filter based on detected emotion.
+    Overlay intensity is based on confidence level.
     """
     try:
-        # Convert emotion color to BGR
-        color_hex = get_emotion_color(emotion)
-        color_rgb = tuple(int(color_hex.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
-
-        # Create color overlay
+        color_bgr = EMOTION_COLORS.get(emotion, (128, 128, 128))  
         overlay = np.full(frame.shape, color_bgr, dtype=np.uint8)
 
-        # Blend based on emotion intensity
-        alpha = 0.2  # Adjust overlay intensity
+        # Adjust intensity dynamically based on confidence level (higher confidence = stronger effect)
+        alpha = min(0.4, max(0.1, confidence))  
+        
         return cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
 
     except Exception as e:
-        logger.error(f"Error applying emotion filter: {str(e)}")
-        return frame
+        logger.error(f"Error applying filter: {str(e)}")
+        return frame  
