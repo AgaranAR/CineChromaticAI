@@ -1,82 +1,88 @@
+"""
+emotion.py — optional face-emotion sampler
+
+This module is NO LONGER part of the core color-grading pipeline.
+The canonical emotion driving all visual grading comes from script.py
+(the script text), not from individual video frames.
+
+This file is kept as a standalone utility you can call separately
+if you want to compare script intent vs on-screen performance.
+It does NOT affect the output video.
+
+Usage (standalone, not imported by app.py):
+    from emotion import sample_video_emotion
+    emotion = sample_video_emotion("my_clip.mp4")
+"""
+
 import cv2
 import logging
 from collections import Counter, deque
-import numpy as np
-from deepface import DeepFace
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Emotion history for smoothing
-emotion_history = deque(maxlen=30)  
-frame_count = 0  # Track frames to reduce DeepFace calls
+# Only import DeepFace when this module is actually used
+_deepface = None
 
-# Emotion to color mapping (BGR format)
-EMOTION_COLORS = {
-    'happy': (0, 215, 255),    # Gold
-    'sad': (255, 0, 0),        # Blue
-    'angry': (0, 0, 255),      # Red
-    'fear': (128, 0, 128),     # Purple
-    'surprise': (0, 165, 255), # Orange
-    'neutral': (128, 128, 128), # Gray
-    'disgust': (75, 0, 130),   # Indigo
-}
+def _get_deepface():
+    global _deepface
+    if _deepface is None:
+        try:
+            from deepface import DeepFace
+            _deepface = DeepFace
+        except ImportError:
+            logger.error("DeepFace is not installed. Run: pip install deepface")
+            raise
+    return _deepface
 
-def preprocess_frame(frame):
-    """Preprocess frame for emotion detection."""
-    try:
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  
-        resized = cv2.resize(frame, (224, 224))  
-        return resized.astype(np.float32) / 255.0  
-    except Exception as e:
-        logger.error(f"Error preprocessing frame: {str(e)}")
-        return None
 
-def detect_emotion(frame):
+def sample_video_emotion(video_path: str, sample_every_n_frames: int = 30) -> str:
     """
-    Detect emotion in a frame using DeepFace.
-    Processes every 5th frame for efficiency.
+    Sample a video at regular intervals and return the most common detected emotion.
+
+    Args:
+        video_path: path to the video file
+        sample_every_n_frames: how often to sample (default: every 30 frames = ~1s at 30fps)
+
+    Returns:
+        One of: "happy" | "sad" | "angry" | "fear" | "surprise" | "disgust" | "neutral"
     """
-    global frame_count
-    frame_count += 1
+    DeepFace = _get_deepface()
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.error(f"Cannot open video: {video_path}")
+        return "neutral"
 
-    if frame_count % 5 != 0:  
-        if emotion_history:
-            return Counter(emotion_history).most_common(1)[0][0]  
-        return 'neutral'
+    history = deque(maxlen=50)
+    frame_idx = 0
 
-    try:
-        results = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-        if isinstance(results, list) and results:
-            emotions = results[0].get('emotion', {})
-            if emotions:
-                dominant_emotion = max(emotions, key=emotions.get)  
-                emotion_history.append(dominant_emotion)
-                smoothed_emotion = Counter(emotion_history).most_common(1)[0][0]
-                return smoothed_emotion
+        frame_idx += 1
+        if frame_idx % sample_every_n_frames != 0:
+            continue
 
-        return 'neutral'
+        try:
+            results = DeepFace.analyze(
+                frame,
+                actions=["emotion"],
+                enforce_detection=False,
+                silent=True,
+            )
+            if isinstance(results, list) and results:
+                emotions = results[0].get("emotion", {})
+                if emotions:
+                    history.append(max(emotions, key=emotions.get))
+        except Exception as e:
+            logger.debug(f"Frame {frame_idx} detection skipped: {e}")
 
-    except Exception as e:
-        logger.error(f"Emotion detection error: {str(e)}")
-        return 'neutral'
+    cap.release()
 
-def apply_emotion_based_filter(frame, emotion, confidence=0.7):
-    """
-    Applies a visual filter based on detected emotion.
-    Overlay intensity is based on confidence level.
-    """
-    try:
-        color_bgr = EMOTION_COLORS.get(emotion, (128, 128, 128))  
-        overlay = np.full(frame.shape, color_bgr, dtype=np.uint8)
+    if not history:
+        return "neutral"
 
-        # Adjust intensity dynamically based on confidence level (higher confidence = stronger effect)
-        alpha = min(0.4, max(0.1, confidence))  
-        
-        return cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
-
-    except Exception as e:
-        logger.error(f"Error applying filter: {str(e)}")
-        return frame  
+    dominant = Counter(history).most_common(1)[0][0]
+    logger.debug(f"Video emotion sample result: {dominant} (from {len(history)} samples)")
+    return dominant
